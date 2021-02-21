@@ -31,6 +31,7 @@ function getElement(MultiList: AllNotesData, d1: number, d2: number, d3: number)
 
 export default class TimelinesPlugin extends Plugin {
 	settings: TimelinesSettings;
+	re: RegExp;
 
 	async onload() {
 		// Load message
@@ -44,6 +45,7 @@ export default class TimelinesPlugin extends Plugin {
 			name: "Create Timeline",
 			callback: () => this.addTimeline()
 		});
+		this.re = /<!--TIMELINE BEGIN tags="([^"]*?)"-->(.*)+?<!--TIMELINE END-->/im;
 	}
 
 	onunload() {
@@ -68,7 +70,7 @@ export default class TimelinesPlugin extends Plugin {
 
 	async addTimeline() {
 
-		const lines = this.getLines(this.getEditor());
+		const lines = this.getTags(this.getEditor());
 		if (!lines) return;
 		// Parse the tags to search for the proper files
 		const tagList = lines.split(";");
@@ -79,7 +81,7 @@ export default class TimelinesPlugin extends Plugin {
 			// if no files valid for timeline
 			return;
 		}
-		// Keep only the files that have the time info 
+		// Keep only the files that have the time info
 		let timeline = document.createElement('div');
 		timeline.setAttribute('class', 'timeline')
 		let timelineNotes = [];
@@ -89,32 +91,38 @@ export default class TimelinesPlugin extends Plugin {
 			// Create a DOM Parser
 			const domparser = new DOMParser()
 			const doc = domparser.parseFromString(await this.app.vault.read(fileList[i]), 'text/html')
+
 			let timelineData = doc.getElementsByClassName('ob-timelines')
-			if (!(timelineData[0] instanceof HTMLElement)) {
-				continue;
-			}
+			for(var j = 0; j < timelineData.length; j++) {
+				let element = timelineData[j];
+				if ( ! (element instanceof HTMLElement) ) {
+					continue;
+				}
 
-			let noteId;
-			// check if a valid date is specified
-			if(timelineData[0].dataset.date[0] == '-'){
-				// if it is a negative year
-				noteId = +timelineData[0].dataset.date.substring(1, timelineData[0].dataset.date.length).split('-').join('') * -1;
-			} else {
-				noteId = +timelineData[0].dataset.date.split('-').join('');
-			}
-			if (!Number.isInteger(noteId)) {
-				continue;
-			}
-			// if not title is specified use note name
-			let noteTitle = timelineData[0].dataset.title ?? fileList[i].name;
+				let noteId;
+				// check if a valid date is specified
+				if (element.dataset.date[0] == '-') {
+					// if it is a negative year
+					noteId = +element.dataset.date.substring(1, element.dataset.date.length).split('-').join('') * -1;
+				} else {
+					noteId = +element.dataset.date.split('-').join('');
+				}
+				if (!Number.isInteger(noteId)) {
+					continue;
+				}
+				// if not title is specified use note name
+				let noteTitle = element.dataset.title ?? fileList[i].name;
+				let noteClass = element.dataset.class ?? "";
+				let notePath = '/' + fileList[i].path;
 
-			if (!timelineNotes[noteId]) {
-				timelineNotes[noteId] = [];
-				timelineNotes[noteId][0] = [timelineData[0].dataset.date, noteTitle, timelineData[0].dataset.img, timelineData[0].innerHTML, fileList[i].path];
-				timelineDates.push(noteId);
-			} else {
-				// if note_id already present append to it
-				timelineNotes[noteId][timelineNotes[noteId].length] = [timelineData[0].dataset.date, noteTitle, timelineData[0].dataset.img, timelineData[0].innerHTML, fileList[i].path];
+				if (!timelineNotes[noteId]) {
+					timelineNotes[noteId] = [];
+					timelineNotes[noteId][0] = [element.dataset.date, noteTitle, element.dataset.img, element.innerHTML, notePath, noteClass];
+					timelineDates.push(noteId);
+				} else {
+					// if note_id already present append to it
+					timelineNotes[noteId][timelineNotes[noteId].length] = [element.dataset.date, noteTitle, element.dataset.img, element.innerHTML, notePath, noteClass];
+				}
 			}
 		}
 
@@ -130,7 +138,7 @@ export default class TimelinesPlugin extends Plugin {
 		// Build the timeline html element
 		for (let i = 0; i < timelineDates.length; i++) {
 			let noteContainer = timeline.createDiv({ cls: 'timeline-container' });
-			let noteHeader = noteContainer.createEl('h2', {text: getElement(timelineNotes, timelineDates[i], 0, 0).replace(/-0*$/g, '').replace(/-0*$/g, '').replace(/-0*$/g, '')})
+			let noteHeader = noteContainer.createEl('h2', { text: getElement(timelineNotes, timelineDates[i], 0, 0).replace(/-0*$/g, '').replace(/-0*$/g, '').replace(/-0*$/g, '') })
 			if (i % 2 == 0) {
 				// if its even add it to the left
 				noteContainer.addClass('timeline-left');
@@ -151,9 +159,12 @@ export default class TimelinesPlugin extends Plugin {
 				if (getElement(timelineNotes, timelineDates[i], j, 2)) {
 					noteCard.createDiv({ cls: 'thumb', attr: { style: `background-image: url(${getElement(timelineNotes, timelineDates[i], j, 2)});` } });
 				}
+				if (getElement(timelineNotes, timelineDates[i], j, 5)) {
+					noteCard.addClass(getElement(timelineNotes, timelineDates[i], j, 5));
+				}
 
-				noteCard.createEl('article').createEl('h3').createEl('a', { cls: 'internal-link', attr: { href: `${getElement(timelineNotes, timelineDates[i], j, 4)}`}, text: getElement(timelineNotes, timelineDates[i], j, 1).replace(/([""``''])/g, '\\$1')})
-				noteCard.createEl('p', {text: getElement(timelineNotes, timelineDates[i], j, 3).replace(/([""``''])/g, '\\$1')})
+				noteCard.createEl('article').createEl('h3').createEl('a', { cls: 'internal-link', attr: { href: `${getElement(timelineNotes, timelineDates[i], j, 4)}` }, text: getElement(timelineNotes, timelineDates[i], j, 1) })
+				noteCard.createEl('p', { text: getElement(timelineNotes, timelineDates[i], j, 3) })
 			}
 		}
 
@@ -169,18 +180,33 @@ export default class TimelinesPlugin extends Plugin {
 		return cm;
 	}
 
-	getLines(editor: CodeMirror.Editor): string {
+	getTags(editor: CodeMirror.Editor): string {
 		if (!editor) return;
-		const selection = editor.getSelection();
+		let selection = editor.getSelection();
+		if (selection == "") {
+			const source = editor.getValue();
+			let match = this.re.exec(source);
+			if (match) {
+				selection = match[1];
+			}
+		}
 		return selection;
 	}
 
 	setLines(editor: CodeMirror.Editor, lines: string[]) {
 		const selection = editor.getSelection();
-		if (selection != "") {
-			editor.replaceSelection(lines.join("\n"));
+		const newContent = lines.join("\n");
+
+		if (selection == "") {
+			const source = editor.getValue();
+			let match = this.re.exec(source);
+			if (match) {
+				editor.setValue(source.replace(match[2], newContent));
+			} else {
+				editor.setValue(newContent);
+			}
 		} else {
-			editor.setValue(lines.join("\n"));
+			editor.replaceSelection(newContent);
 		}
 	}
 }
